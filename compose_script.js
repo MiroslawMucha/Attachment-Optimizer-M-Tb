@@ -8,6 +8,20 @@ const WEBP_QUALITY = 0.82;
 
 let overlay = null;
 let currentZone = "attach"; // "attach" | "inline"
+let extensionEnabled = true;
+
+// Pobierz aktualny stan przy starcie
+browser.runtime.sendMessage({ type: "getEnabled" }).then((r) => {
+  if (r) extensionEnabled = r.enabled;
+});
+
+// Reaguj na toggle z przycisku
+browser.runtime.onMessage.addListener((message) => {
+  if (message.type === "setEnabled") {
+    extensionEnabled = message.enabled;
+    if (!extensionEnabled) hideOverlay();
+  }
+});
 
 // --- Banner "Zoptymalizuj istniejące załączniki" ---
 
@@ -91,7 +105,7 @@ function updateZoneHighlight(zone) {
 // --- Drag events ---
 
 document.addEventListener("dragenter", (e) => {
-  if ([...e.dataTransfer.types].includes("Files")) showOverlay();
+  if (extensionEnabled && [...e.dataTransfer.types].includes("Files")) showOverlay();
 }, true);
 
 document.addEventListener("dragover", (e) => {
@@ -114,7 +128,7 @@ document.addEventListener("dragleave", (e) => {
 }, true);
 
 document.addEventListener("drop", async (e) => {
-  if (!overlay) return;
+  if (!overlay || !extensionEnabled) return;
   e.preventDefault();
   e.stopImmediatePropagation();
 
@@ -145,6 +159,13 @@ document.addEventListener("drop", async (e) => {
     showProgressToast("PDF: przetwarzam" + (pdfFiles.length > 1 ? ` (${pdfFiles.length} pliki)` : "") + "…");
     for (const f of pdfFiles) {
       try {
+        // Limit 25MB dla drag-and-drop (dataURL przez message)
+        if (f.size > 25 * 1024 * 1024) {
+          const dataURL = await blobToDataURL(f);
+          await browser.runtime.sendMessage({ type: "addAttachments", files: [{ dataURL, name: f.name, mimeType: PDF_TYPE, originalSize: f.size, newSize: f.size, skipped: true }] });
+          showToast([{ name: f.name, originalSize: f.size, newSize: f.size, success: true, skipped: true }], { pdf: true, skipped: [true] });
+          continue;
+        }
         const dataURL = await blobToDataURL(f);
         const result = await browser.runtime.sendMessage({
           type: "processPDF",
@@ -236,32 +257,59 @@ async function insertInlineImages(files) {
 function showToast(results, opts) {
   document.getElementById("ao-toast")?.remove();
 
+  const attachIds = results.filter((r) => r.success && r.id).map((r) => r.id);
+  const isInline = !!opts.inline;
+  const isFallback = !!opts.fallback;
+
+  const rows = results.map((r, i) => {
+    let icon, nameHtml, statsHtml, rowClass;
+
+    if (!r.success) {
+      icon = "✕";
+      rowClass = "ao-row-err";
+      nameHtml = escHtml(r.name);
+      statsHtml = `<span class="ao-err-text">${escHtml(r.error || "błąd")}</span>`;
+    } else if (opts.skipped?.[i] || r.skipped) {
+      const reason = opts.pdf ? "PDF wektorowy" : "już zoptymalizowany";
+      icon = "−";
+      rowClass = "ao-row-skip";
+      nameHtml = escHtml(r.name);
+      statsHtml = `<span class="ao-warn-text">${reason} — bez zmian</span>`;
+    } else {
+      const saved = Math.round((1 - r.newSize / r.originalSize) * 100);
+      const dest = isInline ? "treść" : isFallback ? "załącznik*" : "załącznik";
+      icon = "✓";
+      rowClass = "ao-row-ok";
+      nameHtml = escHtml(r.name);
+      statsHtml = `${fmtSize(r.originalSize)} → ${fmtSize(r.newSize)} · <span class="ao-saved">−${saved}%</span> → ${dest}`;
+    }
+
+    return `<div class="ao-file-row ${rowClass}">
+      <span class="ao-file-icon">${icon}</span>
+      <div class="ao-file-info">
+        <span class="ao-file-name">${nameHtml}</span>
+        <span class="ao-file-stats">${statsHtml}</span>
+      </div>
+    </div>`;
+  }).join("");
+
+  const footer = attachIds.length
+    ? `<div class="ao-toast-footer"><button class="ao-btn ao-btn-primary" id="ao-undo">Cofnij</button></div>`
+    : "";
+
   const toast = document.createElement("div");
   toast.id = "ao-toast";
-
-  const attachIds = results.filter((r) => r.success && r.id).map((r) => r.id);
-
-  const suffix = opts.inline
-    ? " → treść"
-    : opts.fallback
-    ? " → załącznik (edytor niedostępny)"
-    : " → załącznik";
-
-  const lines = results.map((r, i) => {
-    if (!r.success) return `<span class="ao-err">Błąd: ${escHtml(r.name)}</span>`;
-    if (opts.skipped?.[i] || r.skipped) {
-      const reason = opts.pdf ? "PDF wektorowy" : "już zoptymalizowany";
-      return `<span class="ao-warn">${escHtml(r.name)}: ${reason} — bez zmian</span>`;
-    }
-    const saved = Math.round((1 - r.newSize / r.originalSize) * 100);
-    return `<span>${escHtml(r.name)}${suffix}: ${fmtSize(r.originalSize)} → ${fmtSize(r.newSize)} <b>-${saved}%</b></span>`;
-  });
-
   toast.innerHTML = `
-    <div class="ao-lines">${lines.join("")}</div>
-    ${attachIds.length ? '<button id="ao-undo">Cofnij</button>' : ""}
+    <div class="ao-toast-header">
+      <span class="ao-toast-title">Attachment Optimizer</span>
+      <button class="ao-toast-close" id="ao-close">✕</button>
+    </div>
+    <div class="ao-toast-files">${rows}</div>
+    ${footer}
   `;
   document.body.appendChild(toast);
+
+  document.getElementById("ao-close").addEventListener("click", () => toast.remove());
 
   if (attachIds.length) {
     document.getElementById("ao-undo").addEventListener("click", async () => {
@@ -272,7 +320,8 @@ function showToast(results, opts) {
     });
   }
 
-  setTimeout(() => toast.remove(), 7000);
+  const timer = setTimeout(() => toast.remove(), 30000);
+  toast.addEventListener("mouseenter", () => clearTimeout(timer));
 }
 
 // --- Utils ---
@@ -296,18 +345,30 @@ function escHtml(s) {
 }
 
 function showErrorToast(msg) {
-  document.getElementById("ao-toast")?.remove();
-  const toast = document.createElement("div");
-  toast.id = "ao-toast";
-  toast.innerHTML = `<div class="ao-lines"><span class="ao-err">${escHtml(msg)}</span></div>`;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 8000);
+  showSimpleToast(msg, "ao-err-text");
+  setTimeout(() => document.getElementById("ao-toast")?.remove(), 10000);
 }
 
 function showProgressToast(msg) {
+  showSimpleToast(msg, "ao-warn-text");
+}
+
+function showSimpleToast(msg, cls) {
   document.getElementById("ao-toast")?.remove();
   const toast = document.createElement("div");
   toast.id = "ao-toast";
-  toast.innerHTML = `<div class="ao-lines"><span class="ao-warn">${escHtml(msg)}</span></div>`;
+  toast.innerHTML = `
+    <div class="ao-toast-header">
+      <span class="ao-toast-title">Attachment Optimizer</span>
+      <button class="ao-toast-close" id="ao-close">✕</button>
+    </div>
+    <div class="ao-toast-files">
+      <div class="ao-file-row ${cls === "ao-err-text" ? "ao-row-err" : "ao-row-info"}">
+        <span class="ao-file-icon">${cls === "ao-err-text" ? "✕" : "◌"}</span>
+        <div class="ao-file-info"><span class="ao-file-name ${cls}">${escHtml(msg)}</span></div>
+      </div>
+    </div>
+  `;
   document.body.appendChild(toast);
+  document.getElementById("ao-close").addEventListener("click", () => toast.remove());
 }

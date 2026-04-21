@@ -1,3 +1,35 @@
+// --- Stan włącz/wyłącz ---
+
+let extensionEnabled = true;
+
+(async () => {
+  const stored = await browser.storage.local.get("enabled");
+  extensionEnabled = stored.enabled !== false; // domyślnie true
+  updateActionIcon();
+})();
+
+function updateActionIcon() {
+  browser.browserAction.setIcon({
+    path: extensionEnabled ? "assets/icon-on.svg" : "assets/icon-off.svg",
+  });
+  browser.browserAction.setTitle({
+    title: extensionEnabled
+      ? "Attachment Optimizer — aktywny (kliknij aby wyłączyć)"
+      : "Attachment Optimizer — wyłączony (kliknij aby włączyć)",
+  });
+}
+
+browser.browserAction.onClicked.addListener(async () => {
+  extensionEnabled = !extensionEnabled;
+  await browser.storage.local.set({ enabled: extensionEnabled });
+  updateActionIcon();
+  // Powiadom wszystkie otwarte okna compose
+  const tabs = await browser.tabs.query({});
+  for (const tab of tabs) {
+    browser.tabs.sendMessage(tab.id, { type: "setEnabled", enabled: extensionEnabled }).catch(() => {});
+  }
+});
+
 browser.composeScripts.register({
   js: [{ file: "compose_script.js" }],
   css: [{ file: "ui/toast.css" }],
@@ -15,16 +47,19 @@ const PDF_TYPE = "application/pdf";
 
 // --- Pomocnicze ---
 
-async function compressPDFBuffer(arrayBuffer, name, originalSize, tabId) {
+async function compressPDFBuffer(arrayBuffer, name, originalSize, tabId, addIfSkipped = true) {
   const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const firstPage = await pdfDoc.getPage(1);
   const text = await firstPage.getTextContent();
   const isScan = text.items.length < PDF_TEXT_THRESHOLD;
 
   if (!isScan || originalSize < 300 * 1024) {
-    const file = new File([arrayBuffer], name, { type: PDF_TYPE });
-    const att = await browser.compose.addAttachment(tabId, { file });
-    return { id: att.id, name, originalSize, newSize: originalSize, success: true, skipped: true };
+    if (addIfSkipped) {
+      const file = new File([arrayBuffer], name, { type: PDF_TYPE });
+      const att = await browser.compose.addAttachment(tabId, { file });
+      return { id: att.id, name, originalSize, newSize: originalSize, success: true, skipped: true };
+    }
+    return { name, originalSize, newSize: originalSize, success: true, skipped: true };
   }
 
   const { PDFDocument } = PDFLib;
@@ -113,6 +148,12 @@ function checkAlpha(ctx, w, h) {
 browser.runtime.onMessage.addListener(async (message, sender) => {
   const tabId = sender.tab.id;
 
+  if (message.type === "getEnabled") {
+    return { enabled: extensionEnabled };
+  }
+
+  if (!extensionEnabled) return { disabled: true };
+
   if (message.type === "addAttachments") {
     const results = [];
     for (const f of message.files) {
@@ -167,7 +208,7 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
           result = await compressImageFile(typed, tabId, id);
         } else if (type === PDF_TYPE) {
           const ab = await file.arrayBuffer();
-          result = await compressPDFBuffer(ab, file.name, file.size, tabId);
+          result = await compressPDFBuffer(ab, file.name, file.size, tabId, false);
           if (result.success && !result.skipped) {
             await browser.compose.removeAttachment(tabId, id);
           }

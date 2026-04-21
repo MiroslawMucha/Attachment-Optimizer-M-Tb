@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="#0066cc"/>
+
+  <!-- Strzałki kompresji zbiegające do środka -->
+  <g stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- lewy górny -->
+    <line x1="6" y1="6" x2="13" y2="13">
+      <animate attributeName="x2" values="13;14;13" dur="1.8s" repeatCount="indefinite"/>
+      <animate attributeName="y2" values="13;14;13" dur="1.8s" repeatCount="indefinite"/>
+    </line>
+    <polyline points="13,9 13,13 9,13">
+      <animate attributeName="points" values="13,9 13,13 9,13;14,10 14,14 10,14;13,9 13,13 9,13" dur="1.8s" repeatCount="indefinite"/>
+    </polyline>
+
+    <!-- prawy górny -->
+    <line x1="26" y1="6" x2="19" y2="13">
+      <animate attributeName="x2" values="19;18;19" dur="1.8s" repeatCount="indefinite"/>
+      <animate attributeName="y2" values="13;14;13" dur="1.8s" repeatCount="indefinite"/>
+    </line>
+    <polyline points="23,13 19,13 19,9">
+      <animate attributeName="points" values="23,13 19,13 19,9;22,14 18,14 18,10;23,13 19,13 19,9" dur="1.8s" repeatCount="indefinite"/>
+    </polyline>
+
+    <!-- lewy dolny -->
+    <line x1="6" y1="26" x2="13" y2="19">
+      <animate attributeName="x2" values="13;14;13" dur="1.8s" repeatCount="indefinite"/>
+      <animate attributeName="y2" values="19;18;19" dur="1.8s" repeatCount="indefinite"/>
+    </line>
+    <polyline points="9,19 13,19 13,23">
+      <animate attributeName="points" values="9,19 13,19 13,23;10,18 14,18 14,22;9,19 13,19 13,23" dur="1.8s" repeatCount="indefinite"/>
+    </polyline>
+
+    <!-- prawy dolny -->
+    <line x1="26" y1="26" x2="19" y2="19">
+      <animate attributeName="x2" values="19;18;19" dur="1.8s" repeatCount="indefinite"/>
+      <animate attributeName="y2" values="19;18;19" dur="1.8s" repeatCount="indefinite"/>
+    </line>
+    <polyline points="19,23 19,19 23,19">
+      <animate attributeName="points" values="19,23 19,19 23,19;18,22 18,18 22,18;19,23 19,19 23,19" dur="1.8s" repeatCount="indefinite"/>
+    </polyline>
+  </g>
+
+  <!-- Środkowy kwadrat -->
+  <rect x="13" y="13" width="6" height="6" rx="1" fill="white" opacity="0.9">
+    <animate attributeName="opacity" values="0.9;1;0.9" dur="1.8s" repeatCount="indefinite"/>
+  </rect>
+</svg>

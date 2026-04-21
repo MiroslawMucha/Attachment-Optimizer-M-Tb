@@ -1,0 +1,110 @@
+#ao-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+  display: flex;
+  pointer-events: none;
+}
+
+.ao-zone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px dashed #6699cc;
+  background: rgba(0, 80, 200, 0.05);
+  font-family: system-ui, sans-serif;
+  color: #6699cc;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.ao-zone + .ao-zone {
+  border-left: none;
+}
+
+.ao-zone span {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.ao-zone b {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ao-zone small {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.ao-zone.ao-active {
+  background: rgba(0, 100, 255, 0.13);
+  border-color: #0066cc;
+  color: #0055bb;
+}
+
+/* --- Toast --- */
+
+#ao-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99999;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border: 1px solid #45475a;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-family: system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  max-width: 520px;
+  animation: ao-in 0.18s ease;
+}
+
+@keyframes ao-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.ao-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ao-lines span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ao-lines b {
+  color: #a6e3a1;
+}
+
+.ao-err {
+  color: #f38ba8;
+}
+
+#ao-undo {
+  background: #313244;
+  color: #cdd6f4;
+  border: 1px solid #585b70;
+  border-radius: 5px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+#ao-undo:hover {
+  background: #45475a;
+}

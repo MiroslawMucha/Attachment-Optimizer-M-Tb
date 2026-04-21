@@ -1,0 +1,219 @@
+const IMAGE_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif",
+  "image/webp", "image/bmp", "image/tiff", "image/avif",
+]);
+const MAX_SIDE = 1920;
+const WEBP_QUALITY = 0.82;
+
+let overlay = null;
+let currentZone = "attach"; // "attach" | "inline"
+
+// --- Overlay ---
+
+function showOverlay() {
+  if (overlay) return;
+  overlay = document.createElement("div");
+  overlay.id = "ao-overlay";
+  overlay.innerHTML = `
+    <div class="ao-zone" id="ao-z-attach">
+      <span>📎</span>
+      <b>Jako załącznik</b>
+      <small>skompresowany</small>
+    </div>
+    <div class="ao-zone" id="ao-z-inline">
+      <span>📄</span>
+      <b>Wstaw do treści</b>
+      <small>skompresowany</small>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  updateZoneHighlight("attach");
+}
+
+function hideOverlay() {
+  overlay?.remove();
+  overlay = null;
+  currentZone = "attach";
+}
+
+function updateZoneHighlight(zone) {
+  if (!overlay) return;
+  overlay.querySelector("#ao-z-attach").classList.toggle("ao-active", zone === "attach");
+  overlay.querySelector("#ao-z-inline").classList.toggle("ao-active", zone === "inline");
+}
+
+// --- Drag events ---
+
+document.addEventListener("dragenter", (e) => {
+  if ([...e.dataTransfer.types].includes("Files")) showOverlay();
+}, true);
+
+document.addEventListener("dragover", (e) => {
+  if (!overlay) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  e.dataTransfer.dropEffect = "copy";
+
+  const zone = e.clientX < window.innerWidth / 2 ? "attach" : "inline";
+  if (zone !== currentZone) {
+    currentZone = zone;
+    updateZoneHighlight(zone);
+  }
+}, true);
+
+document.addEventListener("dragleave", (e) => {
+  if (e.relatedTarget === null || e.relatedTarget === document.documentElement) {
+    hideOverlay();
+  }
+}, true);
+
+document.addEventListener("drop", async (e) => {
+  if (!overlay) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+
+  const zone = currentZone;
+  hideOverlay();
+
+  const allFiles = [...e.dataTransfer.files];
+  const imageFiles = allFiles.filter((f) => IMAGE_TYPES.has(f.type));
+  const otherFiles = allFiles.filter((f) => !IMAGE_TYPES.has(f.type));
+
+  // Pliki inne niż obrazy → zawsze jako załącznik bez zmian
+  if (otherFiles.length > 0) {
+    const pass = await Promise.all(
+      otherFiles.map(async (f) => ({
+        dataURL: await blobToDataURL(f),
+        name: f.name,
+        mimeType: f.type || "application/octet-stream",
+        originalSize: f.size,
+        newSize: f.size,
+      }))
+    );
+    await browser.runtime.sendMessage({ type: "addAttachments", files: pass });
+  }
+
+  if (imageFiles.length === 0) return;
+
+  const processed = await Promise.all(imageFiles.map(compressImage));
+
+  if (zone === "inline") {
+    insertInlineImages(processed);
+  } else {
+    const response = await browser.runtime.sendMessage({ type: "addAttachments", files: processed });
+    if (response?.results) showToast(response.results, {});
+  }
+}, true);
+
+// --- Kompresja obrazu ---
+
+async function compressImage(file) {
+  const bitmap = await createImageBitmap(file);
+  let { width, height } = bitmap;
+
+  if (width > MAX_SIDE || height > MAX_SIDE) {
+    const ratio = Math.min(MAX_SIDE / width, MAX_SIDE / height);
+    width = Math.round(width * ratio);
+    height = Math.round(height * ratio);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+
+  const keepPNG = file.type === "image/png" && hasAlpha(ctx, width, height);
+  const mimeType = keepPNG ? "image/png" : "image/webp";
+  const quality = keepPNG ? undefined : WEBP_QUALITY;
+
+  const blob = await new Promise((r) => canvas.toBlob(r, mimeType, quality));
+  const ext = keepPNG ? "png" : "webp";
+  const name = file.name.replace(/\.[^.]+$/, `.${ext}`);
+  const dataURL = await blobToDataURL(blob);
+
+  return { dataURL, name, mimeType, originalSize: file.size, newSize: blob.size };
+}
+
+function hasAlpha(ctx, w, h) {
+  const data = ctx.getImageData(0, 0, w, h).data;
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] < 255) return true;
+  }
+  return false;
+}
+
+// --- Wstaw do treści maila (przez compose API w tle) ---
+
+async function insertInlineImages(files) {
+  const response = await browser.runtime.sendMessage({ type: "insertInline", files });
+
+  if (response?.fallback) {
+    // Tryb tekstowy — fallback do załącznika
+    const r = await browser.runtime.sendMessage({ type: "addAttachments", files });
+    if (r?.results) showToast(r.results, { fallback: true });
+  } else {
+    showToast(files.map((f) => ({ ...f, id: null, success: true })), { inline: true });
+  }
+}
+
+// --- Toast ---
+
+function showToast(results, opts) {
+  document.getElementById("ao-toast")?.remove();
+
+  const toast = document.createElement("div");
+  toast.id = "ao-toast";
+
+  const attachIds = results.filter((r) => r.success && r.id).map((r) => r.id);
+
+  const suffix = opts.inline
+    ? " → treść"
+    : opts.fallback
+    ? " → załącznik (edytor niedostępny)"
+    : " → załącznik";
+
+  const lines = results.map((r) => {
+    if (!r.success) return `<span class="ao-err">Błąd: ${escHtml(r.name)}</span>`;
+    const saved = Math.round((1 - r.newSize / r.originalSize) * 100);
+    return `<span>${escHtml(r.name)}${suffix}: ${fmtSize(r.originalSize)} → ${fmtSize(r.newSize)} <b>-${saved}%</b></span>`;
+  });
+
+  toast.innerHTML = `
+    <div class="ao-lines">${lines.join("")}</div>
+    ${attachIds.length ? '<button id="ao-undo">Cofnij</button>' : ""}
+  `;
+  document.body.appendChild(toast);
+
+  if (attachIds.length) {
+    document.getElementById("ao-undo").addEventListener("click", async () => {
+      for (const id of attachIds) {
+        await browser.runtime.sendMessage({ type: "removeAttachment", id });
+      }
+      toast.remove();
+    });
+  }
+
+  setTimeout(() => toast.remove(), 7000);
+}
+
+// --- Utils ---
+
+function blobToDataURL(blob) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}

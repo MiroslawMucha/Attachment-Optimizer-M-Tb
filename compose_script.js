@@ -9,6 +9,51 @@ const WEBP_QUALITY = 0.82;
 let overlay = null;
 let currentZone = "attach"; // "attach" | "inline"
 
+// --- Banner "Zoptymalizuj istniejące załączniki" ---
+
+async function initOptimizeBanner(retriesLeft = 4) {
+  try {
+    const { attachments } = await browser.runtime.sendMessage({ type: "listAttachments" });
+    // Filtrujemy po rozszerzeniu nazwy — listAttachments nie zwraca mimeType
+    const OPTIMIZABLE_EXT = /\.(jpe?g|png|gif|webp|bmp|tiff?|avif|pdf)$/i;
+    const eligible = attachments.filter((a) => a.size > 80 * 1024 && OPTIMIZABLE_EXT.test(a.name));
+
+    if (eligible.length === 0) {
+      if (retriesLeft > 0) setTimeout(() => initOptimizeBanner(retriesLeft - 1), 600);
+      return;
+    }
+
+    if (document.getElementById("ao-banner")) return; // już pokazany
+
+    const totalSize = eligible.reduce((s, a) => s + a.size, 0);
+    const n = eligible.length;
+
+    const banner = document.createElement("div");
+    banner.id = "ao-banner";
+    banner.innerHTML = `
+      <span>📎 ${n} załącznik${n === 1 ? "" : n < 5 ? "i" : "ów"} (${fmtSize(totalSize)}) — zoptymalizować?</span>
+      <div class="ao-banner-btns">
+        <button id="ao-banner-yes">Zoptymalizuj</button>
+        <button id="ao-banner-no">✕</button>
+      </div>
+    `;
+    document.body.appendChild(banner);
+
+    document.getElementById("ao-banner-no").addEventListener("click", () => banner.remove());
+    document.getElementById("ao-banner-yes").addEventListener("click", async () => {
+      banner.remove();
+      showProgressToast(`Optymalizuję ${n} plik${n === 1 ? "" : "i"}…`);
+      const result = await browser.runtime.sendMessage({ type: "optimizeAttachments", ids: eligible.map((a) => a.id) });
+      if (result?.results) showToast(result.results, {});
+    });
+  } catch {
+    if (retriesLeft > 0) setTimeout(() => initOptimizeBanner(retriesLeft - 1), 600);
+  }
+}
+
+// Startuj z opóźnieniem — dajemy czas Thunderbirdowi na załadowanie załączników
+setTimeout(() => initOptimizeBanner(), 800);
+
 // --- Overlay ---
 
 function showOverlay() {

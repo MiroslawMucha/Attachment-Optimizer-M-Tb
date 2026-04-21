@@ -45,6 +45,56 @@
   color: #0055bb;
 }
 
+/* --- Banner (istniejące załączniki) --- */
+
+#ao-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 99997;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-bottom: 1px solid #45475a;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-family: system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  animation: ao-in 0.18s ease;
+}
+
+.ao-banner-btns {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+#ao-banner-yes {
+  background: #0066cc;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#ao-banner-yes:hover { background: #0055bb; }
+
+#ao-banner-no {
+  background: transparent;
+  color: #888;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+}
+
+#ao-banner-no:hover { color: #cdd6f4; }
+
 /* --- Toast --- */
 
 #ao-toast {

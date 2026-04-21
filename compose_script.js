@@ -2,6 +2,7 @@ const IMAGE_TYPES = new Set([
   "image/jpeg", "image/png", "image/gif",
   "image/webp", "image/bmp", "image/tiff", "image/avif",
 ]);
+const PDF_TYPE = "application/pdf";
 const MAX_SIDE = 1920;
 const WEBP_QUALITY = 0.82;
 
@@ -77,9 +78,10 @@ document.addEventListener("drop", async (e) => {
 
   const allFiles = [...e.dataTransfer.files];
   const imageFiles = allFiles.filter((f) => IMAGE_TYPES.has(f.type));
-  const otherFiles = allFiles.filter((f) => !IMAGE_TYPES.has(f.type));
+  const pdfFiles  = allFiles.filter((f) => f.type === PDF_TYPE);
+  const otherFiles = allFiles.filter((f) => !IMAGE_TYPES.has(f.type) && f.type !== PDF_TYPE);
 
-  // Pliki inne niż obrazy → zawsze jako załącznik bez zmian
+  // Inne pliki (docx, xlsx…) → załącznik bez zmian
   if (otherFiles.length > 0) {
     const pass = await Promise.all(
       otherFiles.map(async (f) => ({
@@ -91,6 +93,25 @@ document.addEventListener("drop", async (e) => {
       }))
     );
     await browser.runtime.sendMessage({ type: "addAttachments", files: pass });
+  }
+
+  // PDF-y → kompresja w background
+  if (pdfFiles.length > 0) {
+    showProgressToast("PDF: przetwarzam" + (pdfFiles.length > 1 ? ` (${pdfFiles.length} pliki)` : "") + "…");
+    for (const f of pdfFiles) {
+      try {
+        const dataURL = await blobToDataURL(f);
+        const result = await browser.runtime.sendMessage({
+          type: "processPDF",
+          dataURL,
+          name: f.name,
+          originalSize: f.size,
+        });
+        showToast([result], { pdf: true, skipped: [result.skipped] });
+      } catch (err) {
+        showErrorToast("PDF błąd: " + (err.message || String(err)));
+      }
+    }
   }
 
   if (imageFiles.length === 0) return;
@@ -129,11 +150,18 @@ async function compressImage(file) {
   const quality = keepPNG ? undefined : WEBP_QUALITY;
 
   const blob = await new Promise((r) => canvas.toBlob(r, mimeType, quality));
+
+  // Jeśli kompresja nie dała min. 5% oszczędności — zostaw oryginał
+  if (file.size < 100 * 1024 || blob.size >= file.size * 0.95) {
+    const dataURL = await blobToDataURL(file);
+    return { dataURL, name: file.name, mimeType: file.type, originalSize: file.size, newSize: file.size, skipped: true };
+  }
+
   const ext = keepPNG ? "png" : "webp";
   const name = file.name.replace(/\.[^.]+$/, `.${ext}`);
   const dataURL = await blobToDataURL(blob);
 
-  return { dataURL, name, mimeType, originalSize: file.size, newSize: blob.size };
+  return { dataURL, name, mimeType, originalSize: file.size, newSize: blob.size, skipped: false };
 }
 
 function hasAlpha(ctx, w, h) {
@@ -174,8 +202,12 @@ function showToast(results, opts) {
     ? " → załącznik (edytor niedostępny)"
     : " → załącznik";
 
-  const lines = results.map((r) => {
+  const lines = results.map((r, i) => {
     if (!r.success) return `<span class="ao-err">Błąd: ${escHtml(r.name)}</span>`;
+    if (opts.skipped?.[i] || r.skipped) {
+      const reason = opts.pdf ? "PDF wektorowy" : "już zoptymalizowany";
+      return `<span class="ao-warn">${escHtml(r.name)}: ${reason} — bez zmian</span>`;
+    }
     const saved = Math.round((1 - r.newSize / r.originalSize) * 100);
     return `<span>${escHtml(r.name)}${suffix}: ${fmtSize(r.originalSize)} → ${fmtSize(r.newSize)} <b>-${saved}%</b></span>`;
   });
@@ -216,4 +248,21 @@ function fmtSize(bytes) {
 
 function escHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function showErrorToast(msg) {
+  document.getElementById("ao-toast")?.remove();
+  const toast = document.createElement("div");
+  toast.id = "ao-toast";
+  toast.innerHTML = `<div class="ao-lines"><span class="ao-err">${escHtml(msg)}</span></div>`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 8000);
+}
+
+function showProgressToast(msg) {
+  document.getElementById("ao-toast")?.remove();
+  const toast = document.createElement("div");
+  toast.id = "ao-toast";
+  toast.innerHTML = `<div class="ao-lines"><span class="ao-warn">${escHtml(msg)}</span></div>`;
+  document.body.appendChild(toast);
 }

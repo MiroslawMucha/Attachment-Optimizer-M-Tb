@@ -12,6 +12,10 @@
   "description": "Kompresuje obrazy przeciągnięte do wiadomości (WebP, auto-skalowanie)",
   "permissions": ["compose"],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": [
+      "libs/pdf.min.js",
+      "libs/pdf-lib.min.js",
+      "background.js"
+    ]
   }
 }

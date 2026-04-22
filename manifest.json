@@ -8,9 +8,14 @@
     }
   },
   "name": "Attachment Optimizer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Kompresuje obrazy przeciągnięte do wiadomości (WebP, auto-skalowanie)",
   "permissions": ["compose", "storage"],
+  "icons": {
+    "32": "assets/icon32.png",
+    "64": "assets/icon64.png",
+    "128": "assets/icon128.png"
+  },
   "browser_action": {
     "default_title": "Attachment Optimizer — włącz/wyłącz",
     "default_icon": "assets/icon-on.svg",

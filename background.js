@@ -48,6 +48,10 @@ const PDF_TYPE = "application/pdf";
 // --- Pomocnicze ---
 
 async function compressPDFBuffer(arrayBuffer, name, originalSize, tabId, addIfSkipped = true) {
+  if (!arrayBuffer || arrayBuffer.byteLength < 100) {
+    throw new Error(`Pusty bufor PDF: ${name}`);
+  }
+
   const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const firstPage = await pdfDoc.getPage(1);
   const text = await firstPage.getTextContent();
@@ -56,6 +60,7 @@ async function compressPDFBuffer(arrayBuffer, name, originalSize, tabId, addIfSk
   if (!isScan || originalSize < 300 * 1024) {
     if (addIfSkipped) {
       const file = new File([arrayBuffer], name, { type: PDF_TYPE });
+      if (file.size < 100) throw new Error(`Plik skompresowany do 0 bajtów: ${name}`);
       const att = await browser.compose.addAttachment(tabId, { file });
       return { id: att.id, name, originalSize, newSize: originalSize, success: true, skipped: true };
     }
@@ -64,24 +69,41 @@ async function compressPDFBuffer(arrayBuffer, name, originalSize, tabId, addIfSk
 
   const { PDFDocument } = PDFLib;
   const newPdf = await PDFDocument.create();
+  let renderedPages = 0;
 
   for (let i = 1; i <= pdfDoc.numPages; i++) {
-    const page = await pdfDoc.getPage(i);
-    const viewport = page.getViewport({ scale: PDF_SCALE });
-    const canvas = document.createElement("canvas");
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    try {
+      const page = await pdfDoc.getPage(i);
+      const viewport = page.getViewport({ scale: PDF_SCALE });
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
 
-    const jpegBytes = new Uint8Array(
-      await (await new Promise((r) => canvas.toBlob(r, "image/jpeg", PDF_JPEG_QUALITY))).arrayBuffer()
-    );
-    const img = await newPdf.embedJpg(jpegBytes);
-    newPdf.addPage([viewport.width, viewport.height])
-          .drawImage(img, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+      const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", PDF_JPEG_QUALITY));
+      if (!blob || blob.size < 100) continue;
+      const jpegBytes = new Uint8Array(await blob.arrayBuffer());
+      const img = await newPdf.embedJpg(jpegBytes);
+      newPdf.addPage([viewport.width, viewport.height])
+            .drawImage(img, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+      renderedPages++;
+    } catch (_) {
+      // pomiń uszkodzoną stronę
+    }
   }
 
-  const compressed = await newPdf.save();
+  const compressed = renderedPages > 0 ? await newPdf.save() : null;
+
+  // Fallback do oryginału jeśli kompresja dała pusty lub podejrzanie mały wynik
+  if (!compressed || compressed.length < 500 || compressed.length >= originalSize) {
+    const origFile = new File([arrayBuffer], name, { type: PDF_TYPE });
+    if (addIfSkipped) {
+      const att = await browser.compose.addAttachment(tabId, { file: origFile });
+      return { id: att.id, name, originalSize, newSize: originalSize, success: true, skipped: true };
+    }
+    return { name, originalSize, newSize: originalSize, success: true, skipped: true };
+  }
+
   const file = new File([compressed], name, { type: PDF_TYPE });
   const att = await browser.compose.addAttachment(tabId, { file });
   return { id: att.id, name, originalSize, newSize: compressed.length, success: true, skipped: false };
@@ -183,10 +205,15 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
       const arrayBuffer = await (await fetch(dataURL)).arrayBuffer();
       return await compressPDFBuffer(arrayBuffer, name, originalSize, tabId);
     } catch (err) {
-      const ab = await (await fetch(dataURL)).arrayBuffer();
-      const file = new File([ab], name, { type: PDF_TYPE });
-      const att = await browser.compose.addAttachment(tabId, { file });
-      return { id: att.id, name, originalSize, newSize: originalSize, success: true, skipped: true, error: err.message };
+      try {
+        const ab = await (await fetch(dataURL)).arrayBuffer();
+        if (!ab || ab.byteLength < 100) throw new Error("pusty bufor fallback");
+        const file = new File([ab], name, { type: PDF_TYPE });
+        const att = await browser.compose.addAttachment(tabId, { file });
+        return { id: att.id, name, originalSize, newSize: originalSize, success: true, skipped: true, error: err.message };
+      } catch (err2) {
+        return { name, originalSize, newSize: 0, success: false, error: `${err.message} / fallback: ${err2.message}` };
+      }
     }
   }
 
